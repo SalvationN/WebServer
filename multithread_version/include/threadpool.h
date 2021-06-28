@@ -13,7 +13,7 @@ public:
     threadpool(int m_thread_number = 8, int m_max_requests = 10000);
     ~threadpool();
     bool append(T* request);
-    static void worker(void*);
+    static void* worker(void*);
     void run();
 
 private:
@@ -28,7 +28,7 @@ private:
 
 template < typename T >
 threadpool<T>::threadpool(int thread_number, int max_requests) :
-        m_thread_number(thread_number), m_max_requests(max_requests), m_stop(false), m_threads(NULL)
+        m_thread_number(thread_number), m_max_request(max_requests), m_stop(false), m_threads(NULL)
 {
     if(thread_number <= 0 || max_requests <= 0) {
         throw std::exception();
@@ -62,9 +62,9 @@ threadpool<T>::~threadpool() {
 }
 
 template <typename T>
-bool threadpool<T>::append() {
+bool threadpool<T>::append(T* request) {
     m_queuelocker.lock();
-    if(m_workqueue.size() > m_max_requests) {
+    if(m_workqueue.size() > m_max_request) {
         m_queuelocker.unlock();
         return false;
     }
@@ -75,8 +75,8 @@ bool threadpool<T>::append() {
 }
 
 template <typename T>
-void threadpool<T>::worker(void* arg) {
-    threadpool* pool = (thread* pool) arg;
+void* threadpool<T>::worker(void* arg) {
+    threadpool* pool = (threadpool*) arg;
     pool->run();
     return pool;
 }

@@ -3,7 +3,7 @@
 
 #include <semaphore.h>
 #include <pthread.h>
-#include <exception.h>
+#include <exception>
 
 class sem {
 public:
