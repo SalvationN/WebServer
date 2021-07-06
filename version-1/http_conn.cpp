@@ -10,7 +10,7 @@ const char* error_404_title = "Not Found";
 const char* error_404_form = "The requested file was not found on this server.\n";
 const char* error_500_title = "Internal Error";
 const char* error_500_form = "There was an unusual problem serving the request file.\n";
-const char* doc_root = "/var/www/html";
+const char* doc_root = "./html";
 
 int setnonblocking (int fd) {
 	int old_option = fcntl(fd, F_GETFL);
@@ -38,7 +38,7 @@ void removefd(int epollfd, int fd) {
 void modfd(int epollfd, int fd, int ev) {
 	epoll_event event;
 	event.data.fd = fd;
-	event.events = ev | EPOLLIN | EPOLLONESHOT | EPOLLRDHUP;
+	event.events = ev | EPOLLET | EPOLLONESHOT | EPOLLRDHUP;
 	epoll_ctl(epollfd, EPOLL_CTL_MOD, fd, &event);
 }
 
@@ -98,17 +98,17 @@ http_conn::LINE_STATUS http_conn::parse_line() {
 			}
 			return LINE_BAD;
 		}
-		else if(temp = '\n') {
+		else if(temp == '\n') {
 			// this may be the last line of the data, which also means we've read a whole line.
 			if(m_checked_index > 1 && m_read_buf[m_checked_index - 1] == '\r') {	
 				m_read_buf[m_checked_index++] = '\0';
 				m_read_buf[m_checked_index++] = '\0';
-				return LINE_OK;
+				return  LINE_OK;
 			}
 			return LINE_BAD;
 		}
 	}
-	return LINE_BAD;
+	return LINE_OPEN;
 }
 
 bool http_conn::read() {
@@ -123,6 +123,9 @@ bool http_conn::read() {
 			if(errno == EAGAIN || errno == EWOULDBLOCK) {
 				break;
 			}
+			return false;
+		}
+		else if(bytes_read == 0) {
 			return false;
 		}
 		m_read_index += bytes_read;
@@ -140,7 +143,7 @@ http_conn::HTTP_CODE http_conn::parse_request_line(char* text) {
 		return BAD_REQUEST;
 	}
 	// now text: "GET\0", m_url: "http://www.baidu.com/index.html HTTP/1.1"
-	*m_url++ == '\0';
+	*m_url++ = '\0';
 
 	char* method = text;
 	if(strcasecmp(text, "GET") == 0) {
@@ -419,7 +422,7 @@ bool http_conn::process_write(HTTP_CODE ret) {
 				m_iv[0].iov_len = m_write_index;
 				m_iv[1].iov_base = m_file_address;
 				m_iv[1].iov_len = m_file_stat.st_size;
-				m_iv_count = 1;
+				m_iv_count = 2;
 				return true;
 			}
 			else {
