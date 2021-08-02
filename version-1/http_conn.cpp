@@ -56,6 +56,10 @@ void http_conn::close_conn(bool real_close) {
 void http_conn::init(int sockfd, const sockaddr_in& addr) {
 	m_sockfd = sockfd;
 	m_address = addr;
+	struct linger shot = {0, 0};
+
+	setsockopt(sockfd, SOL_SOCKET, SO_LINGER, &shot, sizeof(shot));
+
 	addfd(m_epollfd, sockfd, true);
 	m_user_count++;
 	init();
