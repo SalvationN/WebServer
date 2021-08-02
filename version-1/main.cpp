@@ -19,6 +19,17 @@
 
 extern int addfd(int epollfd, int fd, bool one_shot);
 extern int removefd(int epollfd, int fd);
+extern int setnonblocking(int fd);
+
+static int pipefd[2];
+static int epollfd = 0;
+
+void sig_handler(int sig) {
+	int save_errno = errno;
+	int msg = sig;
+	send(pipefd[1], (char*)&msg, 1, 0);
+	errno = save_errno;
+}
 
 void addsig(int sig, void(handler)(int), bool restart = true) {
 	struct sigaction sa;
@@ -78,12 +89,25 @@ int main(int argc, char* argv[]) {
 	assert(ret >= 0);
 
 	epoll_event events[MAX_EVENT_NUMBER];
-	int epollfd = epoll_create(5);
+	epollfd = epoll_create(5);
 	assert(epollfd != -1);
 	addfd(epollfd, listenfd, false);
 	http_conn::m_epollfd = epollfd;
 
-	while(true) {
+	// handle signals
+	ret = socketpair(PF_UNIX, SOCK_STREAM, 0 ,pipefd);
+	assert(ret != -1);
+	setnonblocking(pipefd[1]);
+	addfd(epollfd, pipefd[0], false);
+
+	addsig(SIGHUP, sig_handler, false);
+	addsig(SIGCHLD, sig_handler, false);
+	addsig(SIGTERM, sig_handler, false);
+	addsig(SIGINT, sig_handler, false);
+
+	bool stop_server = false;
+
+	while(!stop_server) {
 		int number = epoll_wait(epollfd, events, MAX_EVENT_NUMBER, -1);
 		if(number < 0 && errno != EINTR) {
 			printf("epoll failure\n");
@@ -105,6 +129,34 @@ int main(int argc, char* argv[]) {
 					continue;
 				}
 				users[connfd].init(connfd, client_address);
+			}
+			else if(sockfd == pipefd[0] && (events[i].events & EPOLLIN)) {
+				int sig;
+				char signals[1024];
+				ret = recv(pipefd[0], signals, sizeof(signals), 0);
+				if(ret == -1) {
+					continue;
+				}
+				else {
+					for(int i = 0; i < ret; ++i) {
+						switch(signals[i]) {
+							case SIGCHLD:
+							case SIGHUP:
+							{
+								continue;
+							}
+							case SIGTERM:
+							case SIGINT:
+							{
+								stop_server = true;
+							}
+							default:
+							{
+								continue;
+							}
+						}
+					}
+				}
 			}
 			else if(events[i].events & (EPOLLRDHUP | EPOLLHUP | EPOLLERR)) {
 				users[sockfd].close_conn();
