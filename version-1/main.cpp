@@ -13,9 +13,11 @@
 #include "include/locker.h"
 #include "include/threadpool.h"
 #include "include/http_conn.h"
+#include "include/lst_timer.h"
 
 #define MAX_FD 65536
 #define MAX_EVENT_NUMBER 10000
+#define TIMESLOT 10
 
 extern int addfd(int epollfd, int fd, bool one_shot);
 extern int removefd(int epollfd, int fd);
@@ -23,6 +25,7 @@ extern int setnonblocking(int fd);
 
 static int pipefd[2];
 static int epollfd = 0;
+static sort_timer_lst timer_lst;
 
 void sig_handler(int sig) {
 	int save_errno = errno;
@@ -40,6 +43,15 @@ void addsig(int sig, void(handler)(int), bool restart = true) {
 	}
 	sigfillset(&sa.sa_mask);
 	assert(sigaction(sig, &sa, NULL) != -1);
+}
+
+void timer_handler() {
+	timer_lst.tick();
+	alarm(TIMESLOT);
+}
+
+void cb_func(http_conn* user_data) {
+	user_data->close_conn();
 }
 
 void show_error(int connfd, const char* info) {
@@ -129,6 +141,13 @@ int main(int argc, char* argv[]) {
 					continue;
 				}
 				users[connfd].init(connfd, client_address);
+				util_timer* timer = new util_timer;
+				timer->user_data = &users[connfd];
+				timer->cb_func = cb_func;
+				time_t cur = time(NULL);
+				timer->expire = cur + 3*TIMESLOT;
+				users[connfd].set_timer(timer);
+				timer_lst.add_timer(timer);
 			}
 			else if(sockfd == pipefd[0] && (events[i].events & EPOLLIN)) {
 				int sig;
@@ -156,22 +175,56 @@ int main(int argc, char* argv[]) {
 							}
 						}
 					}
-				}
+				} 
 			}
 			else if(events[i].events & (EPOLLRDHUP | EPOLLHUP | EPOLLERR)) {
-				users[sockfd].close_conn();
+				util_timer* timer = users[sockfd].get_timer();
+				cb_func(&users[sockfd]);
+				if(timer) {
+					timer_lst.del_timer(timer);
+				}
 			}
 			else if(events[i].events & EPOLLIN) {
-				if(users[sockfd].read()) {
+				util_timer* timer = users[sockfd].get_timer();
+				int ret = users[sockfd].read();
+				if(ret > 0) {
+					time_t cur = time(NULL);
+					timer->expire = cur + 3*TIMESLOT;
+					timer_lst.adjust_timer(timer);
 					pool->append(users + sockfd);
 				}
-				else {
-					users[sockfd].close_conn();
+				else if(ret == 0) {
+					cb_func(&users[sockfd]);
+					if(timer) {
+						timer_lst.del_timer(timer);
+					}
+				}
+				else if(errno != EAGAIN) {
+					cb_func(&users[sockfd]);
+					if(timer) {
+						timer_lst.del_timer(timer);
+					}
 				}
 			}
 			else if(events[i].events & EPOLLOUT) {
-				if(!users[sockfd].write()) {
-					users[sockfd].close_conn();
+				util_timer* timer = users[sockfd].get_timer();
+				int ret = users[sockfd].write();
+				if(ret > 0) {
+					time_t cur = time(NULL);
+					timer->expire = cur + 3*TIMESLOT;
+					timer_lst.adjust_timer(timer);
+				}
+				else if(ret == -1) {
+					cb_func(&users[sockfd]);
+					if(timer) {
+						timer_lst.del_timer(timer);
+					}
+				}
+				else if(ret == -2) {
+					cb_func(&users[sockfd]);
+					if(timer) {
+						timer_lst.del_timer(timer);
+					}
 				}
 			}
 			else {}

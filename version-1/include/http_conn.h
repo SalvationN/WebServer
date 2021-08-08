@@ -21,6 +21,8 @@
 #include <errno.h>
 #include "locker.h"
 
+class util_timer;
+
 class http_conn {
 // global variable
 public:
@@ -41,8 +43,11 @@ public:
 	void init(int sockfd, const sockaddr_in& addr);
 	void close_conn(bool real_close = true);
 	void process();
-	bool read();
-	bool write();
+	int read();
+	int write();
+
+	bool set_timer(util_timer* timer);
+	util_timer* get_timer();
 
 // private function
 private:
@@ -112,6 +117,8 @@ private:
     struct stat m_file_stat;
     struct iovec m_iv[2];
     int m_iv_count;
+
+	util_timer* mytimer;
 };
 
 #endif

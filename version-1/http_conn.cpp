@@ -1,4 +1,5 @@
 #include "include/http_conn.h"
+#include "include/lst_timer.h"
 
 /* define some http status  */
 const char* ok_200_title = "OK";
@@ -83,6 +84,14 @@ void http_conn::init() {
 	memset(m_real_file, '\0', FILENAME_LEN);
 }
 
+bool http_conn::set_timer(util_timer* timer) {
+	mytimer = timer;
+}
+
+util_timer* http_conn::get_timer() {
+	return mytimer;
+}
+
 // slave state machine; used to parse the content of one line
 http_conn::LINE_STATUS http_conn::parse_line() {
 	char temp;
@@ -115,9 +124,9 @@ http_conn::LINE_STATUS http_conn::parse_line() {
 	return LINE_OPEN;
 }
 
-bool http_conn::read() {
+int http_conn::read() {
 	if(m_read_index >= READ_BUFFER_SIZE) {
-		return false;
+		return -1;
 	}
 
 	int bytes_read = 0;
@@ -127,14 +136,14 @@ bool http_conn::read() {
 			if(errno == EAGAIN || errno == EWOULDBLOCK) {
 				break;
 			}
-			return false;
+			return -1;
 		}
 		else if(bytes_read == 0) {
-			return false;
+			return 0;
 		}
 		m_read_index += bytes_read;
 	}
-	return true;
+	return 1;
 }
 
 http_conn::HTTP_CODE http_conn::parse_request_line(char* text) {
@@ -215,7 +224,7 @@ http_conn::HTTP_CODE http_conn::parse_headers(char* text) {
 		m_host = text;
 	}
 	else {
-		printf("oop! unknow header %s\n", text);
+		// printf("oop! unknow header %s\n", text);
 	}
 
 	return NO_REQUEST;
@@ -237,7 +246,7 @@ http_conn::HTTP_CODE http_conn::process_read() {
 	while( ( (m_check_state == CHECK_STATE_CONTENT) && (line_status == LINE_OK) ) || (line_status = parse_line() ) == LINE_OK ) {
 		text = get_line();
 		m_start_line = m_checked_index;
-		printf("got 1 http line: %s\n", text);
+		// printf("got 1 http line: %s\n", text);
 
 		switch (m_check_state) {
 			case CHECK_STATE_REQUESTLINE:
@@ -308,14 +317,14 @@ void http_conn::unmap() {
 	}
 }
 
-bool http_conn::write() {
+int http_conn::write() {
 	int temp = 0;
 	int bytes_have_send = 0;
 	int bytes_to_send = m_write_index;
 	if(bytes_to_send == 0) {
 		modfd(m_epollfd, m_sockfd, EPOLLIN);
 		init();
-		return true;
+		return 0;
 	}
 
 	while(1) {
@@ -323,10 +332,10 @@ bool http_conn::write() {
 		if(temp == -1) {
 			if(errno == EAGAIN) {
 				modfd(m_epollfd, m_sockfd, EPOLLOUT);
-				return true;
+				 return 1;
 			}
 			unmap();
-			return false;
+			return -1;
 		}
 
 		bytes_to_send -= temp;
@@ -336,10 +345,10 @@ bool http_conn::write() {
 			if(m_linger) {
 				init();
 				modfd(m_epollfd, m_sockfd, EPOLLIN);
-				return true;
+				return bytes_have_send;
 			} else {
 				modfd(m_epollfd, m_sockfd, EPOLLIN);
-				return false;
+				return -2; 
 			}
 		}
 	}
